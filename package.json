@@ -1,0 +1,29 @@
+{
+  "name": "ro-li-2d-designer",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "dev:cloudflare": "wrangler pages dev ./dist --config wrangler.local.toml",
+    "db:migrate:local": "wrangler d1 migrations apply SHOP_DB --local --config wrangler.local.toml",
+    "deploy:pages": "wrangler pages deploy ./dist --config wrangler.toml",
+    "build": "tsc -b && vite build",
+    "test:designer": "node --test tests/designer-catalog.test.mjs tests/designer-cloudflare-local.test.mjs tests/designer-d1-migration.test.mjs tests/designer-prototype.test.mjs",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "html-to-image": "^1.11.13",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "miniflare": "^5.20261104.0-beta",
+    "typescript": "^5.7.2",
+    "vite": "^6.2.0",
+    "wrangler": "^4.158.0"
+  }
+}

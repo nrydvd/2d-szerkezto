@@ -1,0 +1,13 @@
+name = "ro-li-2d-designer-local"
+compatibility_date = "2026-11-06"
+pages_build_output_dir = "./dist"
+
+[[d1_databases]]
+binding = "SHOP_DB"
+database_name = "roli-local"
+database_id = "00000000-0000-0000-0000-000000000001"
+migrations_dir = "migrations"
+
+[[r2_buckets]]
+binding = "SHOP_ASSETS"
+bucket_name = "roli-local-assets"
