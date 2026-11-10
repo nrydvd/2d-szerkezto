@@ -5,6 +5,10 @@
   "compatibility_date": "2026-11-09",
   "env": {
     "production": {
+      "vars": {
+        "CF_ACCESS_TEAM_DOMAIN": "patient-wood-2317.cloudflareaccess.com",
+        "CF_ACCESS_AUD": "0f8d1baa45059fc19501a68630383d2cdfa54b0a7b037f0c27420962b79c41d5"
+      },
       "d1_databases": [
         {
           "binding": "SHOP_DB",
