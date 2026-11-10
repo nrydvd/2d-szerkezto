@@ -300,7 +300,7 @@ function App() {
     if (!file) return;
     setBusy(true);
     try {
-      await validateImage(file);
+      await validateImage(file, 25 * 1024 * 1024);
       if (maskFile && !["image/png", "image/webp"].includes(file.type)) throw new Error("A maszk átlátszóságot támogató PNG vagy WebP legyen.");
       const objectUrl = URL.createObjectURL(file);
       try {

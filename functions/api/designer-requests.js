@@ -1,11 +1,12 @@
 import { configured, errorResponse, hasAdminAccess, hasImageSignature, json, safeFileName, sameOrigin } from "../_shared/http.js";
 import { designerProductSlug, validateDesignerCatalog } from "../_shared/designer-catalog.js";
 import { normalizeDesignPlan } from "../_shared/designer-plan.js";
+import { shopifyMapping } from "../_shared/shopify.js";
 
 const isRecord = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
 const MAX_FILE_BYTES = 80 * 1024 * 1024;
 const MAX_REQUEST_BYTES = 80 * 1024 * 1024;
-const acceptedRoles = new Set(["plan", "preview", "view-png", "original-upload", "summary-pdf", "archive"]);
+const acceptedRoles = new Set(["plan", "preview", "view-png", "production-png", "original-upload", "summary-pdf", "archive"]);
 
 function isValidDesign(design, product, canvas) {
   if (!isRecord(design) || design.format !== "roli-2d-design" || design.version !== 1 ||
@@ -115,6 +116,18 @@ export async function onRequestPost({ request, env }) {
         preparedFiles.filter((entry) => entry.role === "archive").length !== 1) {
       return errorResponse("A terméknézetek vagy az összesítő fájlok hiányosak.", 400);
     }
+    let mapping = null;
+    if (form.get("purchase") === "1") {
+      const materialId = normalizedPlan.views[normalizedPlan.activeView].materialId;
+      if (Object.values(normalizedPlan.views).some((design) => design.materialId !== materialId)) {
+        return errorResponse("A vásárláshoz minden nézeten ugyanazt az anyagot kell kiválasztani.", 400);
+      }
+      mapping = shopifyMapping(product, slug, materialId);
+      if (!mapping) return errorResponse("Ehhez az anyaghoz nincs beállított Shopify-variáns.", 400);
+      if (preparedFiles.filter((entry) => entry.role === "production-png").length !== expectedViews) {
+        return errorResponse("A gyártási PNG-k hiányosak.", 400);
+      }
+    }
 
     const orderId = crypto.randomUUID();
     const itemId = crypto.randomUUID();
@@ -130,8 +143,8 @@ export async function onRequestPost({ request, env }) {
       env.SHOP_DB.prepare("INSERT INTO designer_orders (id, shopify_order_id) VALUES (?, NULL)").bind(orderId),
       env.SHOP_DB.prepare(
         "INSERT INTO designer_order_items (id, order_id, shopify_line_item_id, shopify_product_id, shopify_variant_id, designer_product_id, product_name, design_json) " +
-        "VALUES (?, ?, NULL, NULL, NULL, ?, ?, ?)",
-      ).bind(itemId, orderId, product.profile.productId, product.profile.name, JSON.stringify(designSummary(normalizedPlan))),
+        "VALUES (?, ?, NULL, ?, ?, ?, ?, ?)",
+      ).bind(itemId, orderId, mapping?.productId ?? null, mapping?.variantId ?? null, product.profile.productId, product.profile.name, JSON.stringify(designSummary(normalizedPlan))),
     ];
     for (const entry of preparedFiles) {
       statements.push(
@@ -143,7 +156,7 @@ export async function onRequestPost({ request, env }) {
       );
     }
     await env.SHOP_DB.batch(statements);
-    return json({ saved: true });
+    return json({ saved: true, orderId, itemId });
   } catch (error) {
     await Promise.all(createdAssetIds.map(async (id) => {
       try { await env.SHOP_ASSETS.delete(id); }

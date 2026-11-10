@@ -10,8 +10,7 @@ import { DEFAULT_TEXT_STYLE, LEGACY_TEXT_STYLE, TEXT_FONTS, isTextFont, textLayo
 import { DEFAULT_IMAGE_EDIT, cropAspect, cropToAspect, sizeWithin, type Crop, type ImageEdit } from "./image";
 import { TextilePreviewCanvas } from "../neszeszerPreview";
 import { unavailablePatternIds } from "./materials";
-import { formatPrice } from "../data/pouchPricing";
-import { captureProductStage, createCustomerPackage, type RequestViewExport } from "../designer-admin/request-package";
+import { captureProductStage, captureProductionArtwork, createCustomerPackage, type RequestViewExport } from "../designer-admin/request-package";
 import {
   designerProductSlug, editorProductViews, readCatalog, readDesignerProduct, resolveCatalog,
   type EditorProduct,
@@ -125,6 +124,8 @@ function Editor({ product, view, viewProfiles, designs, onViewChange, onDesignCh
   const [fabricError, setFabricError] = useState("");
   const [busy, setBusy] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [shopifyPrices, setShopifyPrices] = useState<Record<string, { amount: string; currencyCode: string }>>({});
+  const [savedPurchase, setSavedPurchase] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
   const [mobilePanel, setMobilePanel] = useState<"materials" | "tools">("materials");
   const [imageSize, setImageSize] = useState<{ src: string; width: number; height: number } | null>(null);
@@ -143,6 +144,16 @@ function Editor({ product, view, viewProfiles, designs, onViewChange, onDesignCh
   const selectedImageSrc = selected?.type === "image" && !selected.pattern ? selected.src : undefined;
 
   useEffect(() => { setFabricError(""); setVisualError(""); }, [present.fabricColor, present.materialId]);
+  useEffect(() => {
+    let active = true;
+    fetch(`/api/shopify-prices?slug=${encodeURIComponent(designerProductSlug(product))}`, { cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`Shopify-árak: ${response.status}`);
+        const body = await response.json() as { prices: Record<string, { amount: string; currencyCode: string }> };
+        if (active) setShopifyPrices(body.prices);
+      }).catch((error: unknown) => { console.error("A Shopify-árak nem érhetők el.", error); });
+    return () => { active = false; };
+  }, [product]);
   useEffect(() => {
     const currentView = historyViewRef.current;
     viewDesignsRef.current = { ...viewDesignsRef.current, [currentView]: present };
@@ -522,7 +533,16 @@ function Editor({ product, view, viewProfiles, designs, onViewChange, onDesignCh
     } finally { setBusy(false); }
   }
 
-  async function saveCustomerRequest() {
+  async function continueCheckout(itemId: string) {
+    const response = await fetch("/api/shopify-checkout", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ itemId }),
+    });
+    const body = await response.json() as { checkoutUrl?: string; error?: string };
+    if (!response.ok || !body.checkoutUrl) throw new Error(body.error ?? "A Shopify vásárlás nem készíthető elő.");
+    window.location.assign(body.checkoutUrl);
+  }
+
+  async function saveCustomerRequest(purchase = false) {
     const activeView = view;
     setBusy(true);
     setExporting(true);
@@ -559,7 +579,7 @@ function Editor({ product, view, viewProfiles, designs, onViewChange, onDesignCh
         if (!stage) throw new Error(`${EDITOR_VIEW_LABELS[key]}: a termékterv nem állt készen az exportálásra.`);
         await Promise.all([...stage.querySelectorAll("img")].map((image) => image.decode()));
         setMessage(`${EDITOR_VIEW_LABELS[key]} exportálása…`);
-        exportViews.push({ view: key, png: await captureProductStage(stage, design.canvas.width) });
+        exportViews.push({ view: key, png: await captureProductStage(stage, design.canvas.width), productionPng: await captureProductionArtwork(stage, viewProfile) });
       }
       if (!exportViews.length) throw new Error("Nincs exportálható terméknézet.");
       const files = await createCustomerPackage(product, plan, exportViews);
@@ -569,6 +589,7 @@ function Editor({ product, view, viewProfiles, designs, onViewChange, onDesignCh
       }
       const form = new FormData();
       form.set("productSlug", designerProductSlug(product));
+      if (purchase) form.set("purchase", "1");
       for (const entry of files) {
         form.append("files", entry.file, entry.name);
         form.append("roles", entry.role);
@@ -577,9 +598,13 @@ function Editor({ product, view, viewProfiles, designs, onViewChange, onDesignCh
       if (!response.headers.get("content-type")?.includes("application/json")) {
         throw new Error("A tartós igénytár nem érhető el. A beküldéshez konfigurált Cloudflare D1 és R2 tárhely szükséges.");
       }
-      const body = await response.json() as { saved?: boolean; error?: string };
+      const body = await response.json() as { saved?: boolean; itemId?: string; error?: string };
       if (!response.ok || !body.saved) throw new Error(body.error ?? "A vásárlói igénycsomag nem menthető.");
-      setMessage("A tervezési igénycsomag biztonságosan elmentve. A fájlok az admin Vásárlói igények felületén érhetők el.");
+      if (purchase) {
+        if (!body.itemId) throw new Error("A mentett terv azonosítója hiányzik.");
+        setSavedPurchase(body.itemId);
+        await continueCheckout(body.itemId);
+      } else setMessage("A tervezési igénycsomag biztonságosan elmentve. A fájlok az admin Vásárlói igények felületén érhetők el.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "A tervezési csomag nem készíthető el.");
     } finally {
@@ -590,6 +615,26 @@ function Editor({ product, view, viewProfiles, designs, onViewChange, onDesignCh
       setExporting(false);
       setBusy(false);
     }
+  }
+
+  async function downloadProduction() {
+    setBusy(true);
+    setExporting(true);
+    setSelectedId(null);
+    try {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      if (!stageRef.current) throw new Error("A szerkesztővászon nem érhető el.");
+      const blob = await captureProductionArtwork(stageRef.current, profile);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `roli-${designerProductSlug(product)}-${view}-gyartasi.png`;
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setMessage("A gyártási PNG letöltve.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "A gyártási PNG nem készíthető el.");
+    } finally { setExporting(false); setBusy(false); }
   }
 
   async function load(event: ChangeEvent<HTMLInputElement>) {
@@ -647,8 +692,9 @@ function Editor({ product, view, viewProfiles, designs, onViewChange, onDesignCh
   const selectedImageSize = imageSize?.src === selectedImageSrc ? imageSize : null;
   const unavailablePatterns = unavailablePatternIds(present.layers, material);
   const availablePatterns = material.patterns.filter((pattern) => pattern.active);
-  const price = import.meta.env.DEV && typeof material.priceHuf === "number"
-    ? formatPrice(material.priceHuf)
+  const shopifyPrice = shopifyPrices[material.id];
+  const price = shopifyPrice && Number.isFinite(Number(shopifyPrice.amount))
+    ? new Intl.NumberFormat("hu-HU", { style: "currency", currency: shopifyPrice.currencyCode }).format(Number(shopifyPrice.amount))
     : undefined;
   const activeMaterialPreview = {
     ...material.preview,
@@ -663,14 +709,21 @@ function Editor({ product, view, viewProfiles, designs, onViewChange, onDesignCh
       <header className="designer-header">
         <div className="header-brand"><a className="brand" href="/">Ro-Lí</a><span className="header-divider" aria-hidden="true" /><div><span className="header-caption">Terméktervező</span><h1>{profile.name}</h1></div></div>
         <div className="header-actions">
-          <div className="designer-price" aria-live="polite" aria-label={price ? `Helyi tesztár: ${price}` : "A Shopify variánsára nem érhető el"}>
-            <span>{price ? "Helyi tesztár" : "Shopify-ár"}</span>
+          <div className="designer-price" aria-live="polite" aria-label={price ? `Shopify-ár: ${price}` : "A Shopify variánsára nem érhető el"}>
+            <span>Shopify-ár</span>
             <strong>{price ?? "Nem érhető el"}</strong>
           </div>
           <button type="button" className="header-action" onClick={undo} disabled={busy || !history.past.length} aria-label="Visszavonás" title="Visszavonás"><span aria-hidden="true">↶</span><span className="action-text">Visszavonás</span></button>
           <button type="button" className="header-action" onClick={redo} disabled={busy || !history.future.length} aria-label="Újra" title="Újra"><span aria-hidden="true">↷</span><span className="action-text">Újra</span></button>
           <button type="button" className="primary-button" onClick={save} disabled={busy}>Terv letöltése</button>
+          <button type="button" className="primary-button" onClick={() => void downloadProduction()} disabled={busy}>Gyártási PNG</button>
           <button type="button" className="primary-button" onClick={() => void saveCustomerRequest()} disabled={busy}>Igénycsomag beküldése</button>
+          <button type="button" className="primary-button" onClick={() => void saveCustomerRequest(true)} disabled={busy}>Tovább a vásárláshoz</button>
+          {savedPurchase && <button type="button" className="header-action" disabled={busy} onClick={() => {
+            setBusy(true);
+            void continueCheckout(savedPurchase).catch((error: unknown) => setMessage(error instanceof Error ? error.message : "A vásárlás nem folytatható."))
+              .finally(() => setBusy(false));
+          }}>Korábban mentett terv vásárlásának újrapróbálása</button>}
         </div>
       </header>
       <div className={`layout mobile-${mobilePanel}`}>

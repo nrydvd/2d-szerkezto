@@ -49,10 +49,13 @@ export async function saveAsset(file: File | Blob, name = "feltöltött-kép"): 
     const response = await fetch("/api/admin/assets", {
       method: "POST",
       credentials: "same-origin",
+      redirect: "manual",
       body: form,
     });
     if (!response.ok) {
-      throw new Error(await responseMessage(response, "A fájlt nem sikerült a központi tárba feltölteni."));
+      throw new Error(await responseMessage(response, response.type === "opaqueredirect" || response.status === 401
+        ? "A feltöltéshez adminisztrátori bejelentkezés szükséges."
+        : "A fájlt nem sikerült a központi tárba feltölteni."));
     }
     const result = await response.json() as { id?: unknown };
     if (typeof result.id !== "string" || !result.id) {

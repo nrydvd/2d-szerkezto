@@ -8,6 +8,7 @@ import type { EditorProduct } from "../designer-prototype/catalog";
 export interface RequestViewExport {
   view: EditorViewKey;
   png: Blob;
+  productionPng?: Blob;
 }
 
 export interface RequestFile {
@@ -42,6 +43,63 @@ export async function captureProductStage(stage: HTMLElement, width: number): Pr
   const blob = await (await fetch(dataUrl)).blob();
   if (blob.type !== "image/png" || blob.size < 100) throw new Error("A termékterv PNG-exportja üres vagy hibás.");
   return blob;
+}
+
+export async function captureProductionArtwork(stage: HTMLElement, profile: { canvas: { width: number; height: number }; surfaceMask: string; protectMasks?: { url: string }[] }): Promise<Blob> {
+  const surface = stage.querySelector<HTMLElement>(".surface");
+  const bounds = stage.getBoundingClientRect();
+  if (!surface || !bounds.width || !bounds.height) throw new Error("A mintaréteg nem exportálható.");
+  const width = profile.canvas.width;
+  const height = profile.canvas.height;
+  const maskImage = new Image();
+  maskImage.src = profile.surfaceMask;
+  await maskImage.decode();
+  const mask = document.createElement("canvas");
+  mask.width = width;
+  mask.height = height;
+  const maskContext = mask.getContext("2d", { willReadFrequently: true });
+  if (!maskContext) throw new Error("A mintamaszk nem exportálható.");
+  maskContext.drawImage(maskImage, 0, 0, width, height);
+  for (const protectedMask of profile.protectMasks ?? []) {
+    const image = new Image();
+    image.src = protectedMask.url;
+    await image.decode();
+    maskContext.globalCompositeOperation = "destination-out";
+    maskContext.drawImage(image, 0, 0, width, height);
+  }
+  maskContext.globalCompositeOperation = "source-over";
+  const pixels = maskContext.getImageData(0, 0, width, height).data;
+  let left = width, top = height, right = -1, bottom = -1;
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+    if (pixels[(y * width + x) * 4 + 3] > 0) {
+      left = Math.min(left, x); top = Math.min(top, y);
+      right = Math.max(right, x); bottom = Math.max(bottom, y);
+    }
+  }
+  if (right < left) throw new Error("A mintamaszk nem tartalmaz exportálható területet.");
+  const artworkUrl = await toPng(surface, {
+    width: bounds.width, height: bounds.height, pixelRatio: width / bounds.width,
+    style: { position: "relative", inset: "auto", width: `${bounds.width}px`, height: `${bounds.height}px`, maskImage: "none", webkitMaskImage: "none" },
+  });
+  const artwork = new Image();
+  artwork.src = artworkUrl;
+  await artwork.decode();
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("A gyártási PNG vászna nem érhető el.");
+  context.drawImage(artwork, 0, 0, width, height);
+  context.globalCompositeOperation = "destination-in";
+  context.drawImage(mask, 0, 0);
+  const cropped = document.createElement("canvas");
+  cropped.width = right - left + 1;
+  cropped.height = bottom - top + 1;
+  const croppedContext = cropped.getContext("2d");
+  if (!croppedContext) throw new Error("A gyártási PNG kivágása nem érhető el.");
+  croppedContext.drawImage(canvas, left, top, cropped.width, cropped.height, 0, 0, cropped.width, cropped.height);
+  return new Promise((resolve, reject) => cropped.toBlob((blob) =>
+    blob ? resolve(blob) : reject(new Error("A gyártási PNG nem készíthető el.")), "image/png"));
 }
 
 function wrapText(context: CanvasRenderingContext2D, text: string, width: number): string[] {
@@ -163,7 +221,7 @@ async function createSummaryPdf(
     }
     context.fillStyle = "#877b73";
     context.font = "16px Arial, sans-serif";
-    context.fillText("Shopify-rendelés: nincs összekapcsolva.", 92, pageH - 54);
+    context.fillText("A rendelési állapot az adminfelületen követhető.", 92, pageH - 54);
     await savePage();
 
     paintPage("Személyre szabási részletek");
@@ -320,8 +378,12 @@ export async function createCustomerPackage(
   const planName = uniqueName(`${base}-terv.json`);
   files.push({ name: planName, role: "plan", file: new File([planBlob], planName, { type: planBlob.type }) });
   for (const view of views) {
-    const name = uniqueName(`${base}-${safeName(EDITOR_VIEW_LABELS[view.view])}.png`);
+    const name = uniqueName(`${base}-${safeName(EDITOR_VIEW_LABELS[view.view])}-termekelonezet.png`);
     files.push({ name, role: view.view === plan.activeView ? "preview" : "view-png", file: new File([view.png], name, { type: "image/png" }) });
+    if (view.productionPng) {
+      const productionName = uniqueName(`${base}-${safeName(EDITOR_VIEW_LABELS[view.view])}-gyartasi.png`);
+      files.push({ name: productionName, role: "production-png", file: new File([view.productionPng], productionName, { type: "image/png" }) });
+    }
     const design = plan.views[view.view];
     for (const layer of design?.layers ?? []) {
       if (layer.type !== "image" || layer.pattern || !layer.src.startsWith("data:image/")) continue;
