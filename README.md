@@ -44,6 +44,8 @@ Cloudflare Accessben védd legalább a Pages domain `/termekek/*` és `/api/admi
 
 A `migrations/` fájlok meglévő, sorrendben futtatandó migrációk. Éles adatbázison előbb ellenőrizd a migrációk állapotát és készíts mentést, mert itt sem a migrációk alkalmazása, sem éles adat módosítása nem történt. A `0004_customer_design_requests.sql` a tartós igénycsomag-táblákat hozza létre; ne futtasd újra azokat a migrációkat, amelyeket a Cloudflare már alkalmazottnak jelez.
 
+A `0005_optional_material_prices.sql` a meglévő anyagindexben engedi a hiányzó helyi tesztárat, és a jelenlegi Shopify-azonosító mezőket indexeli. A tényleges ár továbbra is csak a későbbi Shopify-integrációból származhat; a hiányzó ár nem nulla. Az új migrációt is csak a korábbiak állapotának ellenőrzése és mentés után szabad éles adatbázison alkalmazni.
+
 ## Fő modulok
 
 - `src/designer-prototype/`: vásznas szerkesztő, profilok, anyagok, minták, terv beolvasása és exportja

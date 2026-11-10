@@ -1,8 +1,8 @@
-import { configured, errorResponse, hasAdminAccess, json, safeFileName, sameOrigin } from "../_shared/http.js";
+import { configured, errorResponse, hasAdminAccess, hasImageSignature, json, safeFileName, sameOrigin } from "../_shared/http.js";
 import { designerProductSlug, validateDesignerCatalog } from "../_shared/designer-catalog.js";
+import { normalizeDesignPlan } from "../_shared/designer-plan.js";
 
 const isRecord = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
-const viewKeys = ["front", "back", "right", "left"];
 const MAX_FILE_BYTES = 80 * 1024 * 1024;
 const MAX_REQUEST_BYTES = 80 * 1024 * 1024;
 const acceptedRoles = new Set(["plan", "preview", "view-png", "original-upload", "summary-pdf", "archive"]);
@@ -23,29 +23,12 @@ function isValidDesign(design, product, canvas) {
     (layer.type !== "image" || typeof layer.src === "string" && layer.src.length <= 12 * 1024 * 1024));
 }
 
-function validPlan(plan, product) {
-  if (!isRecord(plan) || plan.format !== "roli-2d-design" || plan.version !== 2 ||
-      plan.profileId !== product.profile.id || plan.productId !== product.profile.productId ||
-      !viewKeys.includes(plan.activeView) || !isRecord(plan.views)) return false;
-  const keys = Object.keys(plan.views);
-  if (!keys.length || keys.length > viewKeys.length || !keys.includes(plan.activeView)) return false;
-  return keys.every((key) => {
-    if (!viewKeys.includes(key)) return false;
-    const view = product.profile.views?.[key];
-    const legacyFront = key === "front" && !product.profile.views;
-    const configuredView = view?.photo && view.fabricMask && view.surfaceMask ||
-      legacyFront && product.profile.photo && product.profile.fabricMask && product.profile.surfaceMask;
-    const canvas = view?.canvas ?? (key === "front" ? product.profile.canvas : undefined);
-    return Boolean(configuredView && canvas && isValidDesign(plan.views[key], product, canvas));
-  });
-}
-
 function hasSignature(bytes, role, contentType) {
   if (role === "plan") return contentType === "application/json" && bytes[0] === 0x7b;
   if (role === "summary-pdf") return contentType === "application/pdf" && new TextDecoder().decode(bytes.subarray(0, 5)) === "%PDF-";
   if (role === "archive") return contentType === "application/zip" && bytes[0] === 0x50 && bytes[1] === 0x4b;
-  if (contentType !== "image/png") return false;
-  return bytes.length >= 8 && [137, 80, 78, 71, 13, 10, 26, 10].every((byte, index) => bytes[index] === byte);
+  if (role !== "original-upload" && contentType !== "image/png") return false;
+  return hasImageSignature(bytes, contentType);
 }
 
 function designSummary(plan) {
@@ -123,8 +106,9 @@ export async function onRequestPost({ request, env }) {
     let plan;
     try { plan = JSON.parse(new TextDecoder().decode(planFile.bytes)); }
     catch { return errorResponse("A szerkesztési terv JSON-fájlja hibás.", 400); }
-    if (!validPlan(plan, product)) return errorResponse("A terv nézetei nem ehhez az aktív termékhez tartoznak.", 400);
-    const expectedViews = Object.keys(plan.views).length;
+    const normalizedPlan = normalizeDesignPlan(plan, product, isValidDesign);
+    if (!normalizedPlan) return errorResponse("A terv nézetei nem ehhez az aktív termékhez tartoznak.", 400);
+    const expectedViews = Object.keys(normalizedPlan.views).length;
     if (preparedFiles.filter((entry) => entry.role === "preview").length !== 1 ||
         preparedFiles.filter((entry) => entry.role === "view-png").length !== expectedViews - 1 ||
         preparedFiles.filter((entry) => entry.role === "summary-pdf").length !== 1 ||
@@ -147,7 +131,7 @@ export async function onRequestPost({ request, env }) {
       env.SHOP_DB.prepare(
         "INSERT INTO designer_order_items (id, order_id, shopify_line_item_id, shopify_product_id, shopify_variant_id, designer_product_id, product_name, design_json) " +
         "VALUES (?, ?, NULL, NULL, NULL, ?, ?, ?)",
-      ).bind(itemId, orderId, product.profile.productId, product.profile.name, JSON.stringify(designSummary(plan))),
+      ).bind(itemId, orderId, product.profile.productId, product.profile.name, JSON.stringify(designSummary(normalizedPlan))),
     ];
     for (const entry of preparedFiles) {
       statements.push(

@@ -114,3 +114,50 @@ test("identity migration supports an initially empty catalog and its first save"
       .get("womens-pouch").product_uuid, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
   } finally { db.close(); }
 });
+
+test("optional material price migration preserves catalogs, identities and both Shopify mapping formats", () => {
+  const db = new DatabaseSync(":memory:");
+  try {
+    db.exec("PRAGMA foreign_keys = ON");
+    for (const name of ["0001_shop_storage.sql", "0002_designer_catalog.sql", "0003_designer_product_identities.sql", "0004_customer_design_requests.sql"]) {
+      db.exec(migration(name));
+    }
+    const original = products();
+    original[0].shopify = { productGid: "legacy-product", syncStatus: "synced" };
+    original[0].materials[1].shopifyVariantIds = ["legacy-variant"];
+    const originalPayload = JSON.stringify(original);
+    db.prepare("INSERT INTO shop_state (state_key, payload) VALUES (?, ?)").run("designerProducts", originalPayload);
+    const identity = db.prepare("SELECT product_uuid FROM designer_product_identities").get().product_uuid;
+    db.exec(migration("0005_optional_material_prices.sql"));
+    assert.equal(db.prepare("SELECT payload FROM shop_state").get().payload, originalPayload);
+    assert.equal(db.prepare("SELECT product_uuid FROM designer_product_identities").get().product_uuid, identity);
+    assert.equal(db.prepare("SELECT shopify_product_gid FROM designer_products").get().shopify_product_gid, "legacy-product");
+    assert.deepEqual(JSON.parse(db.prepare("SELECT shopify_variant_ids FROM designer_materials WHERE material_id = ?")
+      .get(original[0].materials[1].id).shopify_variant_ids), ["legacy-variant"]);
+    assert.deepEqual(db.prepare("SELECT price_huf FROM designer_materials ORDER BY price_huf").all().map((row) => row.price_huf), [5490, 5990]);
+
+    const changed = structuredClone(original);
+    changed[0].shopifyProductId = "current-product";
+    changed[0].materials[0].shopifyVariantId = "current-variant";
+    delete changed[0].materials[0].priceHuf;
+    assert.equal(validateDesignerCatalog(changed), null);
+    const payload = JSON.stringify(changed);
+    db.prepare("UPDATE shop_state SET payload = ? WHERE state_key = ?").run(payload, "designerProducts");
+    assert.equal(db.prepare("SELECT shopify_product_gid FROM designer_products").get().shopify_product_gid, "current-product");
+    const material = db.prepare("SELECT price_huf, shopify_variant_ids FROM designer_materials WHERE material_id = ?")
+      .get(changed[0].materials[0].id);
+    assert.equal(material.price_huf, null);
+    assert.deepEqual(JSON.parse(material.shopify_variant_ids), ["current-variant"]);
+    assert.equal(db.prepare("SELECT product_uuid FROM designer_product_identities").get().product_uuid, identity);
+    assert.deepEqual(db.prepare("PRAGMA foreign_key_check").all(), []);
+    assert.throws(() => db.prepare("UPDATE shop_state SET payload = ? WHERE state_key = ?")
+      .run(JSON.stringify([changed[0], changed[0]]), "designerProducts"));
+    assert.equal(db.prepare("SELECT payload FROM shop_state").get().payload, payload);
+    db.prepare("DELETE FROM shop_state WHERE state_key = ?").run("designerProducts");
+    assert.equal(db.prepare("SELECT COUNT(*) AS n FROM designer_materials").get().n, 0);
+    db.prepare("INSERT INTO shop_state (state_key, payload) VALUES (?, ?)").run("designerProducts", payload);
+    assert.equal(db.prepare("SELECT price_huf FROM designer_materials WHERE material_id = ?")
+      .get(changed[0].materials[0].id).price_huf, null);
+    assert.equal(db.prepare("SELECT product_uuid FROM designer_product_identities").get().product_uuid, identity);
+  } finally { db.close(); }
+});

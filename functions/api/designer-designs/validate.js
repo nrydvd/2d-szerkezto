@@ -1,8 +1,8 @@
 import { configured, errorResponse, json } from "../../_shared/http.js";
 import { designerProductSlug, validateDesignerCatalog } from "../../_shared/designer-catalog.js";
+import { normalizeDesignPlan } from "../../_shared/designer-plan.js";
 
 const isRecord = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
-const viewKeys = ["front", "back", "right", "left"];
 
 function validViewDesign(design, product, canvas) {
   if (!isRecord(design)) return false;
@@ -34,24 +34,7 @@ export async function onRequestPost({ request, env }) {
       designerProductSlug(item) === data.slug);
     if (!product) return errorResponse("A termék nem található vagy nem aktív.", 404);
 
-    const design = data.design;
-    let valid = false;
-    if (design.version === 1) {
-      valid = validViewDesign(design, product, product.profile.canvas);
-    } else if (design.version === 2 && design.format === "roli-2d-design" &&
-        design.profileId === product.profile.id && design.productId === product.profile.productId &&
-        typeof design.activeView === "string" && viewKeys.includes(design.activeView) &&
-        isRecord(design.views) && Object.keys(design.views).length > 0 &&
-        Object.keys(design.views).length <= viewKeys.length && design.views[design.activeView]) {
-      const savedViews = Object.entries(design.views);
-      valid = savedViews.every(([key, saved]) => {
-        if (!viewKeys.includes(key)) return false;
-        const view = product.profile.views?.[key];
-        const configured = view?.photo && view.fabricMask && view.surfaceMask;
-        return Boolean(configured && validViewDesign(saved, product, view.canvas));
-      });
-    }
-    if (!valid) {
+    if (!normalizeDesignPlan(data.design, product, validViewDesign)) {
       return errorResponse("A terv nem tartozik a kiválasztott termékhez vagy érvénytelen.", 400);
     }
     return json({ verified: true });

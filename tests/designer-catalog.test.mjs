@@ -126,6 +126,16 @@ test("saved designs are server-checked against the selected active product", asy
     env,
   });
   assert.equal((await post("noi-neszeszer", design)).status, 200);
+  const legacyCollection = {
+    format: "roli-2d-design", version: 2, profileId: list[0].profile.id,
+    productId: list[0].profile.productId, activeView: "front", views: { front: design },
+  };
+  assert.equal((await post("noi-neszeszer", legacyCollection)).status, 200);
+  assert.equal((await post("noi-neszeszer", { ...legacyCollection, activeView: "back", views: { back: design } })).status, 400);
+  const oldDesign = { ...design };
+  delete oldDesign.productId;
+  delete oldDesign.materialId;
+  assert.equal((await post("noi-neszeszer", oldDesign)).status, 200);
   const frontView = {
     photos: [{ id: "front", url: list[0].profile.photo, name: "Elöl", width: 1254, height: 1254 }],
     referencePhotoId: "front", photo: list[0].profile.photo, canvas: { width: 1254, height: 1254 },
@@ -145,6 +155,7 @@ test("saved designs are server-checked against the selected active product", asy
   };
   payload = JSON.stringify(list);
   assert.equal((await post("noi-neszeszer", collection)).status, 200);
+  assert.equal((await post("noi-neszeszer", design)).status, 200);
   assert.equal((await post("noi-neszeszer", { ...collection, views: { front: design } })).status, 400);
   assert.equal((await post("noi-neszeszer", { ...collection, views: { front: design, back: { ...backDesign, canvas: { width: 901, height: 1200 } } } })).status, 400);
   assert.equal((await post("other-product", design)).status, 404);

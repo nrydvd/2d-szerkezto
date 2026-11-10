@@ -7,7 +7,7 @@
     "dev": "vite",
     "dev:cloudflare": "wrangler pages dev ./dist --config wrangler.local.toml",
     "db:migrate:local": "wrangler d1 migrations apply SHOP_DB --local --config wrangler.local.toml",
-    "deploy:pages": "wrangler pages deploy ./dist --config wrangler.toml",
+    "deploy:pages": "npx wrangler pages deploy dist --project-name 2d-szerkezto",
     "build": "tsc -b && vite build",
     "test:designer": "node --test tests/designer-catalog.test.mjs tests/designer-cloudflare-local.test.mjs tests/designer-d1-migration.test.mjs tests/designer-prototype.test.mjs",
     "preview": "vite preview"

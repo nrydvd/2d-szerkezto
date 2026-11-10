@@ -121,7 +121,7 @@ export async function storeAsset(request, env, purpose, maxBytes) {
   }
 }
 
-function hasImageSignature(bytes, type) {
+export function hasImageSignature(bytes, type) {
   if (type === "image/png") {
     return bytes.length >= 8 && [137, 80, 78, 71, 13, 10, 26, 10].every((value, index) => bytes[index] === value);
   }

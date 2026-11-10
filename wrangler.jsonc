@@ -1,0 +1,24 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "2d-szerkezto",
+  "pages_build_output_dir": "./dist",
+  "compatibility_date": "2026-11-09",
+  "env": {
+    "production": {
+      "d1_databases": [
+        {
+          "binding": "SHOP_DB",
+          "database_name": "2d-szerkezto-db",
+          "database_id": "e933f1ab-bcac-4fe5-913d-f81497e3cbf1",
+          "migrations_dir": "migrations"
+        }
+      ],
+      "r2_buckets": [
+        {
+          "binding": "SHOP_ASSETS",
+          "bucket_name": "2d-szerkezto-assets"
+        }
+      ]
+    }
+  }
+}

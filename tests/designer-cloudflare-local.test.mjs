@@ -70,6 +70,12 @@ test("authenticated admin saves products and uploads through real local D1 and R
     const identity = await db.prepare("SELECT product_uuid FROM designer_product_identities WHERE legacy_product_id = ?")
       .bind("womens-pouch").first();
     assert.match(identity.product_uuid, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    const optionalPriceSql = readFileSync(new URL("../migrations/0005_optional_material_prices.sql", import.meta.url), "utf8");
+    const optionalPriceStatements = optionalPriceSql.match(
+      /CREATE TRIGGER[\s\S]*?\nEND;|CREATE TABLE[\s\S]*?\n\);|DROP TRIGGER[^;]*;|ALTER TABLE[^;]*;|INSERT INTO designer_materials[\s\S]*?FROM designer_materials_previous;|DROP TABLE[^;]*;|UPDATE shop_state[^;]*;/g,
+    );
+    assert.equal(optionalPriceStatements?.length, 11);
+    await db.batch(optionalPriceStatements.map((statement) => db.prepare(statement)));
     second.active = false;
     const third = structuredClone(second);
     third.profile.id = "third-profile";
@@ -77,7 +83,16 @@ test("authenticated admin saves products and uploads through real local D1 and R
     third.slug = "third-product";
     third.profile.fabricMask = pouchProfile.fabricMask;
     third.materials.forEach((m) => { m.layoutId = third.profile.id; m.preview.colorMaskUrl = third.profile.fabricMask; });
+    third.shopifyProductId = "test-product-id";
+    third.materials[0].shopifyVariantId = "test-variant-id";
+    delete third.materials[0].priceHuf;
     assert.equal((await put([product, second, third], revision)).status, 200);
+    const indexedMaterial = await db.prepare("SELECT price_huf, shopify_variant_ids FROM designer_materials WHERE product_id = ? AND material_id = ?")
+      .bind(third.profile.productId, third.materials[0].id).first();
+    assert.equal(indexedMaterial.price_huf, null);
+    assert.deepEqual(JSON.parse(indexedMaterial.shopify_variant_ids), ["test-variant-id"]);
+    assert.equal((await db.prepare("SELECT shopify_product_gid FROM designer_products WHERE product_id = ?")
+      .bind(third.profile.productId).first()).shopify_product_gid, "test-product-id");
     assert.equal((await db.prepare("SELECT product_uuid FROM designer_product_identities WHERE legacy_product_id = ?")
       .bind("womens-pouch").first()).product_uuid, identity.product_uuid);
     assert.equal((await db.prepare("SELECT COUNT(*) AS n FROM designer_product_identities").first()).n, 3);
@@ -117,18 +132,21 @@ test("authenticated admin saves products and uploads through real local D1 and R
         productId: item.profile.productId, activeView: "front", views,
       };
     };
-    const submitPlan = async (item, slug, origin = "https://shop.example", clientIp = "198.51.100.45") => {
+    const submitPlan = async (item, slug, origin = "https://shop.example", clientIp = "198.51.100.45", options = {}) => {
       const form = new FormData();
       form.set("productSlug", slug);
-      const plan = makePlan(item);
+      const plan = options.plan ?? makePlan(item);
+      const views = plan.version === 1 ? { front: plan } : plan.views;
       const requestFiles = [
         ["plan", "terv.json", "application/json", JSON.stringify(plan)],
-        ...Object.keys(plan.views).map((key, index) => [
+        ...Object.keys(views).map((key, index) => [
           index ? "view-png" : "preview", `${key}.png`, "image/png", new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]),
         ]),
         ["summary-pdf", "osszefoglalo.pdf", "application/pdf", "%PDF-1.4"],
         ["archive", "csomag.zip", "application/zip", new Uint8Array([0x50, 0x4b, 0x03, 0x04])],
+        ...(options.files ?? []),
       ];
+      if (options.preview) requestFiles[1] = options.preview;
       for (const [role, name, type, content] of requestFiles) {
         form.append("files", new File([content], name, { type }), name);
         form.append("roles", role);
@@ -142,6 +160,35 @@ test("authenticated admin saves products and uploads through real local D1 and R
     assert.equal((await submitPlan(product, "noi-neszeszer", "https://evil.example")).status, 403);
     assert.equal((await submitPlan(product, "noi-neszeszer", "https://shop.example", null)).status, 429);
     assert.equal((await submitPlan(product, "noi-neszeszer")).status, 200);
+    const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x01]);
+    const webp = new Uint8Array([82, 73, 70, 70, 4, 0, 0, 0, 87, 69, 66, 80]);
+    const png = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+    const legacyDesign = { ...makePlan(product).views.front };
+    delete legacyDesign.productId;
+    delete legacyDesign.materialId;
+    assert.equal((await submitPlan(product, "noi-neszeszer", "https://shop.example", "198.51.100.46", {
+      plan: legacyDesign,
+      files: [
+        ["original-upload", "eredeti.jpg", "image/jpeg", jpeg],
+        ["original-upload", "eredeti.webp", "image/webp", webp],
+        ["original-upload", "eredeti.png", "image/png", png],
+      ],
+    })).status, 200);
+    assert.equal((await submitPlan(product, "noi-neszeszer", "https://shop.example", "198.51.100.46", {
+      files: [["original-upload", "hamis.jpg", "image/jpeg", png]],
+    })).status, 415);
+    assert.equal((await submitPlan(product, "noi-neszeszer", "https://shop.example", "198.51.100.46", {
+      files: [["original-upload", "hamis.webp", "image/webp", jpeg]],
+    })).status, 415);
+    assert.equal((await submitPlan(product, "noi-neszeszer", "https://shop.example", "198.51.100.46", {
+      preview: ["preview", "elonezet.jpg", "image/jpeg", jpeg],
+    })).status, 415);
+    const invalidLegacyPlan = { ...makePlan(product), activeView: "back" };
+    invalidLegacyPlan.views.back = { ...invalidLegacyPlan.views.front };
+    delete invalidLegacyPlan.views.front;
+    assert.equal((await submitPlan(product, "noi-neszeszer", "https://shop.example", "198.51.100.46", {
+      plan: invalidLegacyPlan,
+    })).status, 400);
     const separateProduct = structuredClone(product);
     separateProduct.profile.id = "separate-profile";
     separateProduct.profile.productId = "separate-product";
@@ -163,18 +210,56 @@ test("authenticated admin saves products and uploads through real local D1 and R
     const latestRevision = (await (await adminGet({ request: new Request(adminUrl, { headers }), env })).json()).revision;
     assert.equal((await put([product, separateProduct], latestRevision)).status, 200);
     assert.equal((await submitPlan(separateProduct, "kulon-termek")).status, 200);
+    const newSingleView = makePlan(separateProduct);
+    delete newSingleView.views.back;
+    assert.equal((await submitPlan(separateProduct, "kulon-termek", "https://shop.example", "198.51.100.47", {
+      plan: newSingleView,
+    })).status, 200);
+    const invalidDimensions = makePlan(separateProduct);
+    invalidDimensions.views.back.canvas.width += 1;
+    assert.equal((await submitPlan(separateProduct, "kulon-termek", "https://shop.example", "198.51.100.47", {
+      plan: invalidDimensions,
+    })).status, 400);
+    const invalidProduct = makePlan(separateProduct);
+    invalidProduct.views.back.productId = product.profile.productId;
+    assert.equal((await submitPlan(separateProduct, "kulon-termek", "https://shop.example", "198.51.100.47", {
+      plan: invalidProduct,
+    })).status, 400);
     assert.equal((await listRequests({ request: new Request("https://shop.example/api/designer-requests"), env })).status, 401);
     const requestsResponse = await listRequests({
       request: new Request("https://shop.example/api/designer-requests", { headers }), env,
     });
     assert.equal(requestsResponse.status, 200);
     const orders = (await requestsResponse.json()).orders;
-    assert.equal(orders.length, 2);
+    assert.equal(orders.length, 4);
     assert.deepEqual(new Set(orders.map((order) => order.items[0].productName)), new Set(["Női neszeszer", "Külön termék"]));
-    const multiViewItem = orders.find((order) => order.items[0].productName === "Külön termék").items[0];
+    const multiViewItem = orders.flatMap((order) => order.items)
+      .find((item) => item.productName === "Külön termék" && item.files.some((file) => file.role === "view-png"));
     assert.deepEqual(Object.keys(multiViewItem.design.views), ["front", "back"]);
     assert.equal(multiViewItem.files.filter((file) => file.role === "view-png").length, 1);
     assert.equal(multiViewItem.files.filter((file) => file.role === "archive").length, 1);
+    const legacyItem = orders.flatMap((order) => order.items)
+      .find((item) => item.files.some((file) => file.name === "eredeti.jpg"));
+    assert.ok(legacyItem);
+    assert.equal(legacyItem.design.activeView, "front");
+    const legacyPlanFile = legacyItem.files.find((file) => file.role === "plan");
+    const legacyPlanResponse = await getRequestFile({
+      request: new Request(`https://shop.example/api/admin/designer-requests/files/${legacyPlanFile.id}`, { headers }),
+      env, params: { fileId: legacyPlanFile.id },
+    });
+    assert.deepEqual(await legacyPlanResponse.json(), legacyDesign);
+    const originalFiles = legacyItem.files.filter((file) => file.role === "original-upload");
+    assert.equal(originalFiles.length, 3);
+    for (const [name, type, content] of [["eredeti.jpg", "image/jpeg", jpeg], ["eredeti.webp", "image/webp", webp], ["eredeti.png", "image/png", png]]) {
+      const file = originalFiles.find((entry) => entry.name === name);
+      const response = await getRequestFile({
+        request: new Request(`https://shop.example/api/admin/designer-requests/files/${file.id}`, { headers }),
+        env, params: { fileId: file.id },
+      });
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get("content-type"), type);
+      assert.deepEqual(new Uint8Array(await response.arrayBuffer()), content);
+    }
     assert.ok(orders.every((order) => order.shopifyOrderId === null));
     const storedPreview = orders[0].items[0].files.find((file) => file.role === "preview");
     assert.ok(storedPreview);
