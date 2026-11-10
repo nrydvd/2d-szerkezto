@@ -28,10 +28,6 @@ type PreparedImage = {
   pattern?: { id: string; variantId: string };
 };
 
-function AdminLink() {
-  return <a className="admin-link" href="/termekek/">Adminisztráció</a>;
-}
-
 function designStamp(design: Design) {
   return design.layers.map((layer) =>
     `${layer.id}:${layer.x}:${layer.y}:${layer.width}:${layer.height}:${layer.rotation}:${layer.type === "text" ? layer.text : layer.src.length}`,
@@ -665,7 +661,7 @@ function Editor({ product, view, viewProfiles, designs, onViewChange, onDesignCh
   return (
     <main className="designer">
       <header className="designer-header">
-        <div className="header-brand"><a className="brand" href="/">Ro-Lí</a><span className="header-divider" aria-hidden="true" /><div><span className="header-caption">Terméktervező</span><h1>{profile.name}</h1></div><AdminLink /></div>
+        <div className="header-brand"><a className="brand" href="/">Ro-Lí</a><span className="header-divider" aria-hidden="true" /><div><span className="header-caption">Terméktervező</span><h1>{profile.name}</h1></div></div>
         <div className="header-actions">
           <div className="designer-price" aria-live="polite" aria-label={price ? `Helyi tesztár: ${price}` : "A Shopify variánsára nem érhető el"}>
             <span>{price ? "Helyi tesztár" : "Shopify-ár"}</span>
@@ -1079,9 +1075,8 @@ function App() {
   const restoreDesigns = useCallback((next: Partial<Record<EditorViewKey, Design>>) => {
     setDesigns((current) => ({ ...current, ...next }));
   }, []);
-  if (!products || !selected) return <main className="catalog-notice">
-    <p role="status">{error || (products ? routeSlug ? "Ez a termék nem található vagy nem aktív." : "Nincs aktív szerkeszthető termék." : "Termékek betöltése…")}</p>
-    <AdminLink />
+  if (!products || !selected) return <main className="catalog-notice" role="status">
+    {error || (products ? routeSlug ? "Ez a termék nem található vagy nem aktív." : "Nincs aktív szerkeszthető termék." : "Termékek betöltése…")}
   </main>;
   return <>{error && <p className="catalog-warning" role="alert">{error}</p>}
     <Editor key={selected.profile.productId} product={selected} view={view} viewProfiles={viewProfiles} designs={designs}

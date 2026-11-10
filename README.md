@@ -42,6 +42,8 @@ A helyi Pages-futtatáshoz a `wrangler.local.toml` külön, Wrangler által emul
 
 Cloudflare Accessben védd legalább a Pages domain `/termekek/*` és `/api/admin/*` útvonalait, és hozz létre adminisztrátori belépési szabályt. Az Access application team domain és audience értékét Pages-environment változóként (`CF_ACCESS_TEAM_DOMAIN`, `CF_ACCESS_AUD`) kell beállítani; helyben ezek `.dev.vars` fájlból olvashatók. A `.dev.vars` ne kerüljön verziókezelésbe.
 
+Az adminoldal „Bejelentkezés” gombja a védett `/termekek/` útvonalat nyitja meg: az Access szükség esetén bejelentkeztet, majd az oldal újra lekéri a katalógust. Ha érvényes Access-munkamenettel is 401 jelentkezik, ellenőrizd az adminoldal és az admin API Access-lefedettségét, valamint a backend `CF_ACCESS_TEAM_DOMAIN` és `CF_ACCESS_AUD` értékét; a gomb önmagában nem javítja a hibás Access-konfigurációt.
+
 A `migrations/` fájlok meglévő, sorrendben futtatandó migrációk. Éles adatbázison előbb ellenőrizd a migrációk állapotát és készíts mentést, mert itt sem a migrációk alkalmazása, sem éles adat módosítása nem történt. A `0004_customer_design_requests.sql` a tartós igénycsomag-táblákat hozza létre; ne futtasd újra azokat a migrációkat, amelyeket a Cloudflare már alkalmazottnak jelez.
 
 A `0005_optional_material_prices.sql` a meglévő anyagindexben engedi a hiányzó helyi tesztárat, és a jelenlegi Shopify-azonosító mezőket indexeli. A tényleges ár továbbra is csak a későbbi Shopify-integrációból származhat; a hiányzó ár nem nulla. Az új migrációt is csak a korábbiak állapotának ellenőrzése és mentés után szabad éles adatbázison alkalmazni.

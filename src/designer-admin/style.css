@@ -14,6 +14,9 @@ h2 { font-size: 1.1rem; }
 h3 { margin-top: 30px; border-bottom: 1px solid #eee6de; padding-bottom: 9px; }
 h4 { margin: 14px 0 8px; }
 .notice, .help { color: #77685e; font-size: .85rem; line-height: 1.5; }
+.login-button { display: inline-flex; align-items: center; justify-content: center; padding: 10px 18px; border: 1px solid #6f5143; border-radius: 8px; background: #6f5143; color: #fff; font-weight: 600; text-decoration: none; }
+.login-button:hover { background: #523c32; border-color: #523c32; }
+.login-button:focus-visible { outline: 3px solid #9a6f5c; outline-offset: 2px; }
 .admin-layout { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 24px; }
 aside, .editor { background: #fffdfa; border: 1px solid #e8dfd7; border-radius: 12px; padding: 20px; }
 aside { align-self: start; display: grid; gap: 8px; }

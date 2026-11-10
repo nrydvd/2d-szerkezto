@@ -1,7 +1,7 @@
 import { StrictMode, useEffect, useState, type ChangeEvent } from "react";
 import { createRoot } from "react-dom/client";
 import {
-  designerProductSlug, editorProductViews, hasStoredCatalog, readCatalog, resolveCatalog, uploadCatalogImage, writeCatalog,
+  CatalogAuthenticationError, designerProductSlug, editorProductViews, hasStoredCatalog, readCatalog, resolveCatalog, uploadCatalogImage, writeCatalog,
   type CatalogMaterial, type EditorProduct, type EditorSettings,
 } from "../designer-prototype/catalog";
 import {
@@ -168,6 +168,7 @@ function App() {
   const [busy, setBusy] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [message, setMessage] = useState("");
+  const [loginRequired, setLoginRequired] = useState(false);
   const [step, setStep] = useState(0);
   const [mask, setMask] = useState<string>("surfaceMask");
   const [adminView, setAdminView] = useState<EditorViewKey>("front");
@@ -193,12 +194,16 @@ function App() {
         item.profile.area.height !== items[index].profile.area.height,
       );
       setProducts(normalized);
+      setLoginRequired(false);
       setDirty(changed);
       if (changed) setMessage("A régi képadatok kompatibilisen nézetekké alakultak, a méretek automatikusan a referenciafotókhoz igazodtak. Mentsd el a frissítést.");
       setSelectedProductId(normalized.find((item) => designerProductSlug(item) === routeSlug)?.profile.productId ?? null);
       setLoaded(true);
     }).catch((error: unknown) => {
-      if (live) setMessage(error instanceof Error ? error.message : "A termékek nem tölthetők be.");
+      if (live) {
+        setLoginRequired(error instanceof CatalogAuthenticationError);
+        setMessage(error instanceof Error ? error.message : "A termékek nem tölthetők be.");
+      }
     });
     return () => { live = false; };
   }, [routeSlug]);
@@ -589,6 +594,10 @@ function App() {
   return <main className="admin">
     <header><div><a href="/">Ro-Lí</a><h1>Termékek kezelése</h1></div><nav aria-label="Adminisztráció"><a href="/termekek/igenyek/">Vásárlói igények</a><a href="/szerkeszto/" target="_blank" rel="noreferrer">Szerkesztő megnyitása ↗</a></nav></header>
     <p className="notice" role="status">{message}</p>
+    {loginRequired && <div className="login-prompt">
+      <a className="login-button" href="/termekek/">Bejelentkezés</a>
+      <p className="help">Ha a sikeres belépés után is ez az üzenet jelenik meg, ellenőrizni kell a Cloudflare Access és az admin API beállításait.</p>
+    </div>}
     {import.meta.env.DEV && <p className="notice">Helyi fejlesztői mód: a mentés csak ebben a böngészőben él, nem központi Cloudflare-tárban.</p>}
     {!loaded ? <p>A termékek betöltése szükséges a szerkesztéshez.</p> : <div className="admin-layout">
       <aside><label>Új termék neve<input maxLength={120} value={newName} onChange={(event) => setNewName(event.target.value)} /></label>

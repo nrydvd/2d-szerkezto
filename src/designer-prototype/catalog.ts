@@ -53,6 +53,13 @@ export function configuredEditorViews(profile: EditorProfile): EditorViewKey[] {
 const LOCAL_KEY = "roli-designer-catalog-v1";
 let adminRevision: string | null | undefined;
 
+export class CatalogAuthenticationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CatalogAuthenticationError";
+  }
+}
+
 export function hasStoredCatalog(): boolean {
   return adminRevision !== null;
 }
@@ -79,7 +86,13 @@ export async function readCatalog(admin = false): Promise<EditorProduct[]> {
     if (admin) adminRevision = raw;
     value = raw === null ? null : JSON.parse(raw);
   } else {
-    const response = await fetch(admin ? "/api/admin/designer-products" : "/api/designer-products", { cache: "no-store" });
+    const response = await fetch(admin ? "/api/admin/designer-products" : "/api/designer-products", {
+      cache: "no-store", credentials: "same-origin", ...(admin ? { redirect: "manual" } : {}),
+    });
+    if (admin && (response.status === 401 || response.type === "opaqueredirect")) {
+      const error = response.status === 401 ? await responseError(response) : new Error("Az adminisztrációhoz belépés szükséges.");
+      throw new CatalogAuthenticationError(error.message);
+    }
     if (!response.ok) throw await responseError(response);
     const body = await response.json() as { products: unknown; revision?: unknown };
     if (admin) {

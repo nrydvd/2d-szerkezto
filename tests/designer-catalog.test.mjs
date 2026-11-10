@@ -258,6 +258,10 @@ test("D1 API protects admin access and exposes only active products", async () =
   try {
     const url = "https://shop.example/api/admin/designer-products";
     assert.equal((await adminGet({ request: new Request(url), env })).status, 401);
+    const authenticatedRequest = new Request(url, { headers: { "Cf-Access-Jwt-Assertion": token } });
+    assert.equal((await adminGet({ request: authenticatedRequest, env: { ...env, CF_ACCESS_AUD: "different-audience" } })).status, 401);
+    assert.equal((await adminGet({ request: authenticatedRequest, env: { ...env, CF_ACCESS_TEAM_DOMAIN: undefined } })).status, 401);
+    assert.equal((await adminGet({ request: authenticatedRequest, env })).status, 200);
     const request = (body, origin = "https://shop.example") => new Request(url, {
       method: "PUT", headers: { Origin: origin, "Cf-Access-Jwt-Assertion": token, "Content-Type": "application/json" }, body,
     });
